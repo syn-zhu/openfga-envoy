@@ -14,11 +14,11 @@ repository:
   accepts-automated-change-request: true
   no-third-party-packages: false
   core-team:
-  - name: Jose Carlos Chavez
-    affiliation: Okta
-    email: josecarlos.chavez@okta.com
-    social: https://github.com/jcchavezs
-    primary: true
+    - name: Jose Carlos Chavez
+      affiliation: Okta
+      email: josecarlos.chavez@okta.com
+      social: https://github.com/jcchavezs
+      primary: true
 
   license:
     url: https://raw.githubusercontent.com/openfga/openfga-envoy/main/LICENSE
