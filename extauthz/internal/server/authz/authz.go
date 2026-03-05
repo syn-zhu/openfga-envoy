@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	envoy "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 	openfga "github.com/openfga/go-sdk"
@@ -47,16 +46,7 @@ type ExtAuthZFilter struct {
 	// Per-request store resolution.
 	// When storeIDHeader is set, the filter reads the OpenFGA store_id from that
 	// request header instead of using the client's default store_id.
-	// When storeNameHeader is set, the filter reads a store name and resolves it
-	// to a store_id via the OpenFGA ListStores API (cached).
-	storeIDHeader   string
-	storeNameHeader string
-
-	// Cache: store name -> store_id (resolved via ListStores).
-	// TODO: This cache never expires. If a store is deleted and recreated with
-	// the same name, the stale store_id will be served until the pod restarts.
-	// Consider adding a TTL or an invalidation mechanism.
-	storeNameCache sync.Map
+	storeIDHeader string
 }
 
 var _ envoy.AuthorizationServer = (*ExtAuthZFilter)(nil)
@@ -67,10 +57,6 @@ type Config struct {
 	// StoreIDHeader is the request header name containing the OpenFGA store_id.
 	// If set, overrides the config-level store_id on a per-request basis.
 	StoreIDHeader string
-	// StoreNameHeader is the request header name containing the OpenFGA store name.
-	// The store name is resolved to a store_id via ListStores (cached).
-	// If both StoreIDHeader and StoreNameHeader are set, StoreIDHeader takes precedence.
-	StoreNameHeader string
 }
 
 // NewExtAuthZFilter creates a new ExtAuthZFilter
@@ -80,8 +66,7 @@ func NewExtAuthZFilter(config Config, c *client.OpenFgaClient, logger logger.Log
 		client:         c,
 		extractionKits: config.ExtractionKits,
 		logger:         logger,
-		storeIDHeader:   config.StoreIDHeader,
-		storeNameHeader: config.StoreNameHeader,
+		storeIDHeader:  config.StoreIDHeader,
 	}
 }
 
@@ -135,8 +120,7 @@ func (e *ExtAuthZFilter) extract(ctx context.Context, req *envoy.CheckRequest) (
 
 // resolveStoreID returns the store_id to use for this request.
 // Returns nil if the default (config-level) store_id should be used.
-func (e *ExtAuthZFilter) resolveStoreID(ctx context.Context, headers map[string]string, logger logger.Logger) (*string, error) {
-	// 1. Try explicit store_id header.
+func (e *ExtAuthZFilter) resolveStoreID(headers map[string]string, logger logger.Logger) (*string, error) {
 	if e.storeIDHeader != "" {
 		if storeID, ok := headers[e.storeIDHeader]; ok && storeID != "" {
 			logger.Debug("Using store_id from header", zap.String("header", e.storeIDHeader), zap.String("store_id", storeID))
@@ -144,49 +128,8 @@ func (e *ExtAuthZFilter) resolveStoreID(ctx context.Context, headers map[string]
 		}
 	}
 
-	// 2. Try store name header -> resolve to store_id via ListStores.
-	if e.storeNameHeader != "" {
-		if storeName, ok := headers[e.storeNameHeader]; ok && storeName != "" {
-			storeID, err := e.resolveStoreIDByName(ctx, storeName, logger)
-			if err != nil {
-				return nil, fmt.Errorf("resolving store name %q to store_id: %w", storeName, err)
-			}
-			return &storeID, nil
-		}
-	}
-
-	// 3. Fall back to the default (config-level) store_id.
+	// Fall back to the default (config-level) store_id.
 	return nil, nil
-}
-
-// resolveStoreIDByName resolves an OpenFGA store name to a store_id.
-// Results are cached in storeNameCache. Uses the ListStores name filter
-// for a direct server-side lookup.
-func (e *ExtAuthZFilter) resolveStoreIDByName(ctx context.Context, storeName string, logger logger.Logger) (string, error) {
-	// Check cache first.
-	if cached, ok := e.storeNameCache.Load(storeName); ok {
-		return cached.(string), nil
-	}
-
-	logger.Info("Resolving store name to store_id via ListStores", zap.String("store_name", storeName))
-
-	resp, err := e.client.ListStores(ctx).Options(client.ClientListStoresOptions{
-		Name: &storeName,
-	}).Execute()
-	if err != nil {
-		return "", fmt.Errorf("listing stores: %w", err)
-	}
-
-	for _, store := range resp.GetStores() {
-		if store.GetName() == storeName {
-			storeID := store.GetId()
-			e.storeNameCache.Store(storeName, storeID)
-			logger.Info("Resolved store name to store_id", zap.String("store_name", storeName), zap.String("store_id", storeID))
-			return storeID, nil
-		}
-	}
-
-	return "", fmt.Errorf("no store found with name %q", storeName)
 }
 
 // check implements the Check method of the Authorization interface.
@@ -203,7 +146,7 @@ func (e *ExtAuthZFilter) check(ctx context.Context, req *envoy.CheckRequest, log
 
 	// Resolve the store_id for this request (may differ from config-level default).
 	headers := req.Attributes.GetRequest().GetHttp().GetHeaders()
-	storeID, err := e.resolveStoreID(ctx, headers, logger)
+	storeID, err := e.resolveStoreID(headers, logger)
 	if err != nil {
 		logger.Error("Failed to resolve store_id", zap.Error(err))
 		return deny(codes.Internal, fmt.Sprintf("Error resolving store: %v", err)), nil
