@@ -53,6 +53,9 @@ type ExtAuthZFilter struct {
 	storeNameHeader string
 
 	// Cache: store name -> store_id (resolved via ListStores).
+	// TODO: This cache never expires. If a store is deleted and recreated with
+	// the same name, the stale store_id will be served until the pod restarts.
+	// Consider adding a TTL or an invalidation mechanism.
 	storeNameCache sync.Map
 }
 
