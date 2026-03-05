@@ -18,6 +18,14 @@ type Server struct {
 	APIURL               string `mapstructure:"api_url"`
 	StoreID              string `mapstructure:"store_id"`
 	AuthorizationModelID string `mapstructure:"authorization_model_id"`
+	// StoreIDHeader: request header name containing the OpenFGA store_id.
+	// Overrides store_id on a per-request basis.
+	StoreIDHeader string `mapstructure:"store_id_header"`
+	// StoreNameHeader: request header name containing the OpenFGA store name.
+	// Resolved to a store_id via ListStores (cached). Useful for multi-tenant
+	// deployments where the caller knows the store name but not the store_id.
+	// If both StoreIDHeader and StoreNameHeader are set, StoreIDHeader takes precedence.
+	StoreNameHeader string `mapstructure:"store_name_header"`
 }
 
 type Extractor struct {

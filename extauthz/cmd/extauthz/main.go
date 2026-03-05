@@ -81,7 +81,9 @@ func main() {
 			authz.Config{
 				Enforce:        cfg.Mode == config.AuthModeEnforce,
 				ExtractionKits: extractionSet,
-			},
+				StoreIDHeader:  cfg.Server.StoreIDHeader,
+				StoreNameHeader: cfg.Server.StoreNameHeader,
+							},
 			fgaClient,
 			logger,
 		)
